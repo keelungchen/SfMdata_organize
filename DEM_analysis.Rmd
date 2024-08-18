@@ -1,0 +1,359 @@
+---
+title: "DEM_analysis"
+author: "Yan"
+date: "2024-08-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(habtools)
+library(raster)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+```
+
+
+```{r}
+dem <- horseshoe
+res(dem)
+```
+
+
+```{r}
+# Load a raster
+
+# 指定DEM文件所在的目录
+dem_directory <- "C:/Users/keelu/R/DEM_analysis/data"
+
+# 创建特定的DEM文件名列表
+dem_files <- c("DEM1.tif", "DEM2.tif", "DEM3.tif", "DEM4.tif", "DEM5.tif", "DEM6.tif", "DEM7.tif", "DEM8.tif", "DEM9.tif", "DEM10.tif", "DEM15.tif","DEM20.tif")
+
+# 批量加载DEM并存储在对应的变量中
+dem_list <- lapply(dem_files, function(dem) {
+  file_path <- file.path(dem_directory, dem)
+  raster_data <- raster(file_path)
+  assign(gsub(".tif", "", dem), raster_data, envir = .GlobalEnv)
+})
+
+res(DEM1)
+plot(DEM20)
+# 使用 locator() 获取用户点击的点的坐标
+graphics.off()
+windows()
+coords <- locator(n = 6)  # n = 1 表示你只想获取一个点的坐标
+# 输出获取的坐标
+print(coords)
+
+# 批量裁剪DEM并存储在对应的变量中
+cropped_dem_list <- lapply(dem_files, function(dem) {
+  # 获取已经加载的DEM变量
+  dem_var_name <- gsub(".tif", "", dem)
+  raster_data <- get(dem_var_name)
+  
+  # 对当前DEM进行裁剪
+  cropped_dem <- dem_crop(raster_data, x0 = 333633.2, y0 = 8375734, L = 2, plot = TRUE)
+  
+  # 存储裁剪后的DEM到小写名称的变量中
+  lowercase_var_name <- tolower(dem_var_name)
+  assign(lowercase_var_name, cropped_dem, envir = .GlobalEnv)
+})
+
+
+# 设置绘图窗口为 4x3 的布局
+par(mfrow = c(3, 4), mar = c(1, 1, 1, 1), oma = c(1, 1, 1, 1))
+
+# 循环绘制每个 DEM 图像，没有轴和图例
+for (i in 1:length(cropped_dem_list)) {
+  plot(cropped_dem_list[[i]], main = "", axes = FALSE, box = FALSE, legend = FALSE)
+}
+# 重置绘图窗口为默认的 1x1 布局
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# 使用 rdh 函数对裁剪后的 DEM 进行计算
+rdh_results <- lapply(dem_files, function(dem) {
+  # 获取小写的 DEM 变量名
+  dem_var_name <- tolower(gsub(".tif", "", dem))
+  
+  # 从全局环境中获取裁剪后的 DEM 数据
+  dem_data <- get(dem_var_name)
+  
+  # 对裁剪后的 DEM 进行 rdh 计算
+  result <- rdh(dem_data, lvec = c(0.125, 0.25, 0.5, 1, 2), method_fd = "hvar", method_rg = "hvar")
+  
+  # 返回计算结果
+  return(result)
+})
+
+# 将结果命名为与 DEM 文件名对应的小写变量
+names(rdh_results) <- tolower(gsub(".tif", "", dem_files))
+```
+
+```{r}
+# 提取 DEM 编号
+dem_numbers <- as.numeric(gsub("dem", "", names(rdh_results)))
+
+# 创建一个数据框
+dem_data <- do.call(rbind, rdh_results)
+dem_data$DEM <- dem_numbers
+
+# 重新排列列的顺序
+dem_data <- dem_data[order(dem_data$DEM), c("DEM", "R", "D", "H")]
+
+# 绘制 R 数值的折线图
+plot_R <- ggplot(dem_data, aes(x = DEM, y = R)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(title = "R Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "Rugosity") +
+  theme_minimal()
+
+# 绘制 D 数值的折线图
+plot_D <- ggplot(dem_data, aes(x = DEM, y = D)) +
+  geom_line(color = "green") +
+  geom_point(color = "green") +
+  labs(title = "D Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "FD") +
+  theme_minimal()
+
+# 绘制 H 数值的折线图
+plot_H <- ggplot(dem_data, aes(x = DEM, y = H)) +
+  geom_line(color = "red") +
+  geom_point(color = "red") +
+  labs(title = "H Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "Hieght range") +
+  theme_minimal()
+
+# 使用 gridExtra 包将三个子图组合成一个图
+grid.arrange(plot_R, plot_D, plot_H, ncol = 1)
+```
+
+```{r}
+# 计算变化率
+dem_data$R_rate <- c(NA, diff(dem_data$R) / dem_data$R[-length(dem_data$R)])
+dem_data$D_rate <- c(NA, diff(dem_data$D) / dem_data$D[-length(dem_data$D)])
+dem_data$H_rate <- c(NA, diff(dem_data$H) / dem_data$H[-length(dem_data$H)])
+
+# 查看变化率
+print(dem_data)
+# 绘制 R 的变化率
+plot_R_rate <- ggplot(dem_data, aes(x = DEM, y = R_rate)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(title = "Change Rate of R Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "R Change Rate") +
+  theme_minimal()
+
+# 绘制 D 的变化率
+plot_D_rate <- ggplot(dem_data, aes(x = DEM, y = D_rate)) +
+  geom_line(color = "green") +
+  geom_point(color = "green") +
+  labs(title = "Change Rate of D Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "D Change Rate") +
+  theme_minimal()
+
+# 绘制 H 的变化率
+plot_H_rate <- ggplot(dem_data, aes(x = DEM, y = H_rate)) +
+  geom_line(color = "red") +
+  geom_point(color = "red") +
+  labs(title = "Change Rate of H Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "H Change Rate") +
+  theme_minimal()
+
+grid.arrange(plot_R_rate, plot_D_rate, plot_H_rate, ncol = 1)
+```
+
+#batch process multiple DEMs
+```{r}
+graphics.off()
+windows()
+plot(DEM20)
+# 绘制 coords 中的点
+points(coords$x, coords$y, col = "red", pch = 19)  # 红色实心点
+
+# 绘制黑色方框，以每个点为中心，边长为2
+for (i in 1:length(coords$x)) {
+  rect(
+    xleft = coords$x[i] - 1,   # 左边界
+    ybottom = coords$y[i] - 1, # 下边界
+    xright = coords$x[i] + 1,  # 右边界
+    ytop = coords$y[i] + 1,    # 上边界
+    border = "black",          # 边框颜色
+    lwd = 2                    # 边框线宽
+  )
+}
+```
+
+
+```{r}
+# 创建一个存储裁剪后的DEM的列表
+cropped_dem_list <- list()
+
+# 批量裁剪DEM
+for (i in 1:length(coords$x)) {
+  cropped_dems <- lapply(dem_files, function(dem) {
+    # 获取已经加载的DEM变量
+    dem_var_name <- gsub(".tif", "", dem)
+    raster_data <- get(dem_var_name)
+    
+    # 对当前DEM进行裁剪，使用 coords 中的 x 和 y 值
+    cropped_dem <- dem_crop(raster_data, x0 = coords$x[i], y0 = coords$y[i], L = 2, plot = TRUE)
+    
+    # 存储裁剪后的DEM到小写名称的变量中
+    lowercase_var_name <- tolower(paste(dem_var_name, i, sep = "_"))
+    assign(lowercase_var_name, cropped_dem, envir = .GlobalEnv)
+    
+    return(cropped_dem)
+  })
+  
+  # 将每次裁剪的结果存储在 cropped_dem_list 中
+  cropped_dem_list[[paste0("crop_", i)]] <- cropped_dems
+}
+
+# 查看裁剪结果
+print(cropped_dem_list)
+```
+
+```{r}
+# 创建一个空的数据框来存储结果
+dem_data_6 <- data.frame()
+
+# 遍历 rdh_results_list 中的每个裁剪结果
+for (i in seq_along(rdh_results_list)) {
+  # 获取当前 crop_x 的结果
+  crop_result <- rdh_results_list[[i]]
+  
+  # 遍历每个 DEM 的裁剪结果
+  for (j in seq_along(crop_result)) {
+    # 获取当前 DEM 的结果
+    dem_result <- crop_result[[j]]
+    
+    # 替换 DEM 编号
+    dem_number <- j
+    if (dem_number == 11) {
+      dem_number <- 15
+    } else if (dem_number == 12) {
+      dem_number <- 20
+    }
+    
+    # 创建一个数据框行，包含裁剪编号、DEM 编号、R、D、H
+    dem_row <- data.frame(
+      Crop = paste0("crop_", i),
+      DEM = dem_number,
+      R = dem_result$R,
+      D = dem_result$D,
+      H = dem_result$H
+    )
+    
+    # 将新行绑定到 dem_data 数据框中
+    dem_data_6 <- rbind(dem_data_6, dem_row)
+  }
+}
+
+# 打印最终的数据框
+print(dem_data_6)
+```
+
+```{r}
+# 创建一个空的数据框来存储结果
+dem_data_6_rate <- data.frame()
+
+# 获取所有唯一的 Crop 名称
+crops <- unique(dem_data_6$Crop)
+
+# 遍历每个 Crop
+for (crop in crops) {
+  # 选择当前 Crop 的数据
+  crop_data <- dem_data_6[dem_data_6$Crop == crop, ]
+  
+  # 按 DEM 编号排序
+  crop_data <- crop_data[order(crop_data$DEM), ]
+  
+  # 计算 R, D, H 的变化率
+  crop_data$R_rate <- c(NA, diff(crop_data$R) / crop_data$R[-length(crop_data$R)])
+  crop_data$D_rate <- c(NA, diff(crop_data$D) / crop_data$D[-length(crop_data$D)])
+  crop_data$H_rate <- c(NA, diff(crop_data$H) / crop_data$H[-length(crop_data$H)])
+  
+  # 将计算后的数据合并到结果数据框中
+  dem_data_6_rate <- rbind(dem_data_6_rate, crop_data)
+}
+
+# 打印最终的数据框
+print(dem_data_6_rate)
+```
+
+```{r}
+# 计算平均值和标准误差
+summary_data <- dem_data_6_rate %>%
+  group_by(DEM) %>%
+  summarise(
+    R_rate_mean = mean(R_rate, na.rm = TRUE),
+    R_rate_se = sd(R_rate, na.rm = TRUE) / sqrt(n()),
+    D_rate_mean = mean(D_rate, na.rm = TRUE),
+    D_rate_se = sd(D_rate, na.rm = TRUE) / sqrt(n()),
+    H_rate_mean = mean(H_rate, na.rm = TRUE),
+    H_rate_se = sd(H_rate, na.rm = TRUE) / sqrt(n())
+  )
+
+# 绘制 R 的平均变化率和误差条
+plot_R_rate <- ggplot(summary_data, aes(x = DEM, y = R_rate_mean)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  geom_errorbar(aes(ymin = R_rate_mean - R_rate_se, ymax = R_rate_mean + R_rate_se), width = 0.2, color = "blue") +
+  labs(title = "Average Change Rate of R Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "R Change Rate") +
+  theme_minimal()
+
+# 绘制 D 的平均变化率和误差条
+plot_D_rate <- ggplot(summary_data, aes(x = DEM, y = D_rate_mean)) +
+  geom_line(color = "green") +
+  geom_point(color = "green") +
+  geom_errorbar(aes(ymin = D_rate_mean - D_rate_se, ymax = D_rate_mean + D_rate_se), width = 0.2, color = "green") +
+  labs(title = "Average Change Rate of D Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "D Change Rate") +
+  theme_minimal()
+
+# 绘制 H 的平均变化率和误差条
+plot_H_rate <- ggplot(summary_data, aes(x = DEM, y = H_rate_mean)) +
+  geom_line(color = "red") +
+  geom_point(color = "red") +
+  geom_errorbar(aes(ymin = H_rate_mean - H_rate_se, ymax = H_rate_mean + H_rate_se), width = 0.2, color = "red") +
+  labs(title = "Average Change Rate of H Across Different DEM Resolutions",
+       x = "DEM Resolution (mm/pix)",
+       y = "H Change Rate") +
+  theme_minimal()
+
+# 使用 gridExtra 包将三个图表组合在一起
+grid.arrange(plot_R_rate, plot_D_rate, plot_H_rate, ncol = 1)
+
+```
+
+
+```{r}
+hr(dem1)
+
+# Height variation method
+rg(dem1, method = "hvar", L0 = 0.05, parallel = FALSE) # Parallel = TRUE enables parallel processing using multiple cores to speed up the calculations using the height variation method. Only use this if you have a powerful computer with at least four cores.
+
+# Area method
+rg(dem1, method = "area", L0 = 0.05)
+
+# Height variation method
+fd(dem1, method = "hvar", lvec = c(0.25, 0.5, 1, 2), plot = TRUE, diagnose = TRUE)
+```
+
